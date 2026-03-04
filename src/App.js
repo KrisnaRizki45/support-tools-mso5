@@ -918,9 +918,49 @@ function App() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), settings.timeoutMs);
     const startedAt = performance.now();
+    let prepared = {
+      headers: request.headers || '',
+      body: request.body || '',
+    };
+
+    const buildResultPayload = ({
+      rawText,
+      statusCode,
+      statusText,
+      headersObject,
+      requestHeaders,
+      requestBody,
+    }) => {
+      let formattedBody = rawText;
+      try {
+        formattedBody = JSON.stringify(JSON.parse(rawText), null, 2);
+      } catch (error) {
+        formattedBody = rawText || 'No response body';
+      }
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      const bytes = new TextEncoder().encode(rawText || '').length;
+      const sizeKb = Number((bytes / 1024).toFixed(2));
+      return {
+        ok: Number(statusCode || 0) >= 200 && Number(statusCode || 0) < 300,
+        status: `${statusCode} ${statusText || ''}`.trim(),
+        statusCode: Number(statusCode || 0),
+        responseBody: formattedBody,
+        responseHeaders: headersObject || {},
+        requestHeaders: requestHeaders || '',
+        requestBody: requestBody || '',
+        time: `${elapsedMs} ms`,
+        timeMs: elapsedMs,
+        size: `${sizeKb.toFixed(2)} KB`,
+        sizeKb,
+        url: request.url,
+        method: normalizedMethod,
+        name: request.name || 'Untitled Request',
+        createdAt: new Date().toISOString(),
+      };
+    };
 
     try {
-      const prepared = prepareRequestBody(request);
+      prepared = prepareRequestBody(request);
       const response = await fetch('/api/http-proxy', {
         method: 'POST',
         headers: {
@@ -941,38 +981,66 @@ function App() {
         throw new Error(proxyPayload?.error || `Proxy request gagal (${response.status})`);
       }
 
-      const rawText = proxyPayload.body || '';
-      const elapsedMs = Math.round(performance.now() - startedAt);
-      const headersObject = proxyPayload.headers || {};
-
-      let formattedBody = rawText;
-      try {
-        formattedBody = JSON.stringify(JSON.parse(rawText), null, 2);
-      } catch (error) {
-        formattedBody = rawText || 'No response body';
-      }
-
-      const bytes = new TextEncoder().encode(rawText).length;
-      const sizeKb = Number((bytes / 1024).toFixed(2));
-      return {
-        ok: Number(proxyPayload.status || 0) >= 200 && Number(proxyPayload.status || 0) < 300,
-        status: `${proxyPayload.status} ${proxyPayload.statusText || ''}`.trim(),
-        statusCode: Number(proxyPayload.status || 0),
-        responseBody: formattedBody,
-        responseHeaders: headersObject,
+      return buildResultPayload({
+        rawText: proxyPayload.body || '',
+        statusCode: proxyPayload.status,
+        statusText: proxyPayload.statusText || '',
+        headersObject: proxyPayload.headers || {},
         requestHeaders: prepared.headers || '',
         requestBody: prepared.body || '',
-        time: `${elapsedMs} ms`,
-        timeMs: elapsedMs,
-        size: `${sizeKb.toFixed(2)} KB`,
-        sizeKb,
-        url: request.url,
-        method: normalizedMethod,
-        name: request.name || 'Untitled Request',
-        createdAt: new Date().toISOString(),
-      };
+      });
     } catch (error) {
       const timedOut = error.name === 'AbortError';
+      const canTryDirect =
+        !timedOut &&
+        typeof window !== 'undefined' &&
+        String(error.message || '').toLowerCase().includes('fetch failed') &&
+        /^https?:\/\//i.test(String(request.url || ''));
+
+      if (canTryDirect) {
+        try {
+          const directResponse = await fetch(request.url, {
+            method: normalizedMethod,
+            headers: parseHeaders(prepared.headers || ''),
+            body: ['GET', 'DELETE'].includes(normalizedMethod) ? undefined : prepared.body,
+            signal: controller.signal,
+          });
+          const directText = await directResponse.text();
+          const headersObject = {};
+          directResponse.headers.forEach((value, key) => {
+            headersObject[key] = value;
+          });
+          return buildResultPayload({
+            rawText: directText,
+            statusCode: directResponse.status,
+            statusText: directResponse.statusText || '',
+            headersObject,
+            requestHeaders: prepared.headers || '',
+            requestBody: prepared.body || '',
+          });
+        } catch (directError) {
+          const elapsedMsDirect = Math.round(performance.now() - startedAt);
+          return {
+            ok: false,
+            status: 'Request Failed',
+            statusCode: 0,
+            responseBody:
+              'Proxy cloud gagal dijangkau, lalu fallback direct request juga gagal (kemungkinan CORS/jaringan private).',
+            responseHeaders: {},
+            requestHeaders: prepared.headers || '',
+            requestBody: prepared.body || '',
+            time: `${elapsedMsDirect} ms`,
+            timeMs: elapsedMsDirect,
+            size: '0.00 KB',
+            sizeKb: 0,
+            url: request.url,
+            method: normalizedMethod,
+            name: request.name || 'Untitled Request',
+            createdAt: new Date().toISOString(),
+          };
+        }
+      }
+
       const elapsedMs = Math.round(performance.now() - startedAt);
       return {
         ok: false,
@@ -980,10 +1048,10 @@ function App() {
         statusCode: timedOut ? 408 : 0,
         responseBody: timedOut
           ? `Request timeout setelah ${settings.timeoutMs} ms`
-          : 'Request gagal. Cek URL, CORS, atau koneksi jaringan.',
+          : `Request gagal. ${String(error.message || 'Cek URL, CORS, atau koneksi jaringan.')}`,
         responseHeaders: {},
-        requestHeaders: request.headers || '',
-        requestBody: request.body || '',
+        requestHeaders: prepared.headers || request.headers || '',
+        requestBody: prepared.body || request.body || '',
         time: `${elapsedMs} ms`,
         timeMs: elapsedMs,
         size: '0.00 KB',

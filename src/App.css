@@ -83,6 +83,17 @@
   background: rgba(10, 40, 80, 0.72);
 }
 
+.login-form input:-webkit-autofill,
+.login-form input:-webkit-autofill:hover,
+.login-form input:-webkit-autofill:focus,
+.login-form input:-webkit-autofill:active {
+  -webkit-text-fill-color: #e0f2fe;
+  box-shadow: 0 0 0 1000px rgba(7, 30, 62, 0.9) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px rgba(7, 30, 62, 0.9) inset !important;
+  transition: background-color 9999s ease-in-out 0s;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+}
+
 .password-input-wrap {
   position: relative;
 }
