@@ -1162,6 +1162,11 @@ function App() {
   const handleSaveCollection = async () => {
     if (!url.trim()) {
       setCollectionNotice('Tidak bisa simpan: URL masih kosong.');
+      await showPopup({
+        icon: 'warning',
+        title: 'URL Wajib',
+        text: 'Tidak bisa save collection karena URL masih kosong.',
+      });
       return;
     }
     const requestWithAuth = applyAuthToRequest(
@@ -1297,15 +1302,32 @@ function App() {
   };
 
   const handleDeleteCollection = async (id) => {
-    setCollections((previous) => previous.filter((item) => item.id !== id));
-    if (loadedCollectionId === id) {
-      setLoadedCollectionId(null);
-    }
-    if (!cloudUserId) return;
     try {
-      await apiRequest(`/api/collection-items/${id}`, {
-        method: 'DELETE',
-        internalUser: cloudUserId,
+      const item = collections.find((entry) => entry.id === id);
+      const itemName = item?.name || 'API';
+      const confirmed = await showConfirmPopup({
+        title: 'Hapus API?',
+        text: `API "${itemName}" akan dihapus dari collection.`,
+        confirmButtonText: 'Ya, hapus',
+      });
+      if (!confirmed) return;
+
+      if (cloudUserId) {
+        await apiRequest(`/api/collection-items/${id}`, {
+          method: 'DELETE',
+          internalUser: cloudUserId,
+        });
+      }
+
+      setCollections((previous) => previous.filter((entry) => entry.id !== id));
+      if (loadedCollectionId === id) {
+        setLoadedCollectionId(null);
+      }
+      setCollectionNotice(`API "${itemName}" berhasil dihapus.`);
+      await showPopup({
+        icon: 'success',
+        title: 'Delete Berhasil',
+        text: `API "${itemName}" berhasil dihapus.`,
       });
     } catch (error) {
       setAuthMessage(error.message || 'Gagal hapus collection item.');
@@ -1727,8 +1749,22 @@ function App() {
   };
 
   const handleClearHistory = async () => {
+    const confirmed = await showConfirmPopup({
+      title: 'Clear History?',
+      text: 'Semua riwayat request akan dihapus permanen.',
+      confirmButtonText: 'Ya, hapus',
+    });
+    if (!confirmed) return;
+
     setHistory([]);
-    if (!cloudUserId) return;
+    if (!cloudUserId) {
+      await showPopup({
+        icon: 'success',
+        title: 'History Dibersihkan',
+        text: 'Semua history lokal berhasil dihapus.',
+      });
+      return;
+    }
     try {
       await apiRequest('/api/request-history', {
         method: 'DELETE',
